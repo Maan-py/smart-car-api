@@ -54,25 +54,26 @@ Cek status server.
 
 Registrasi ESP32 device. Jika device sudah terdaftar, akan diupdate dengan data baru.
 
+**Catatan Penting:**
+
+- **Auto-Create Settings**: Ketika device baru diregister, sistem akan **otomatis membuat default settings** untuk device tersebut dengan `max_weight` yang diambil dari global setting (atau 500.0 jika global setting tidak ada)
+- Jika device sudah terdaftar sebelumnya, setting tidak akan dibuat ulang
+
 **Request Body:**
 
 ```json
 {
   "device_id": "esp32_001",
-  "device_name": "Car 1",
-  "device_type": "ESP32",
-  "mac_address": "AA:BB:CC:DD:EE:FF",
-  "firmware_version": "1.0.0"
+  "name": "Car 1",
+  "location": "Garage A"
 }
 ```
 
 **Request Body Fields:**
 
 - `device_id` (required) - Unique device identifier
-- `device_name` (optional) - Nama device
-- `device_type` (optional) - Tipe device, default: "ESP32"
-- `mac_address` (optional) - MAC address device
-- `firmware_version` (optional) - Versi firmware device
+- `name` (optional) - Nama device
+- `location` (optional) - Lokasi device
 
 **Response:**
 
@@ -82,13 +83,10 @@ Registrasi ESP32 device. Jika device sudah terdaftar, akan diupdate dengan data 
   "data": {
     "id": "uuid",
     "device_id": "esp32_001",
-    "device_name": "Car 1",
-    "device_type": "ESP32",
-    "mac_address": "AA:BB:CC:DD:EE:FF",
-    "firmware_version": "1.0.0",
-    "registered_at": "2024-01-15T10:30:00.000Z",
+    "name": "Car 1",
+    "location": "Garage A",
     "last_seen": "2024-01-15T10:30:00.000Z",
-    "is_active": true
+    "created_at": "2024-01-15T10:00:00.000Z"
   }
 }
 ```
@@ -704,10 +702,8 @@ curl -X POST http://localhost:3000/api/devices/register \
   -H "Content-Type: application/json" \
   -d '{
     "device_id": "esp32_001",
-    "device_name": "Car 1",
-    "device_type": "ESP32",
-    "mac_address": "AA:BB:CC:DD:EE:FF",
-    "firmware_version": "1.0.0"
+    "name": "Car 1",
+    "location": "Garage A"
   }'
 ```
 

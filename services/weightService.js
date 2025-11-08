@@ -3,13 +3,26 @@ import { broker, MQTT_TOPICS } from "../config/mqtt.js";
 
 /**
  * Get current max weight setting
+ * Returns global setting (device_id = NULL) if available, otherwise latest setting
  */
-export async function getMaxWeight() {
+export async function getMaxWeight(deviceId = null) {
   try {
-    const { data, error } = await supabase.from("settings").select("max_weight, updated_at").order("updated_at", { ascending: false }).limit(1).single();
+    if (deviceId) {
+      // Get device-specific setting
+      const { data, error } = await supabase.from("settings").select("max_weight, updated_at").eq("device_id", deviceId).order("updated_at", { ascending: false }).limit(1).single();
 
-    if (error) throw error;
-    return data?.max_weight || 500.0;
+      if (error && error.code !== "PGRST116") throw error;
+      if (data) return data.max_weight;
+    }
+
+    // Get global setting (device_id = NULL)
+    const { data: globalData, error: globalError } = await supabase.from("settings").select("max_weight, updated_at").is("device_id", null).order("updated_at", { ascending: false }).limit(1).single();
+
+    if (globalError && globalError.code !== "PGRST116") throw globalError;
+    if (globalData) return globalData.max_weight;
+
+    // Fallback to default
+    return 500.0;
   } catch (error) {
     console.error("Error getting max weight:", error);
     throw error;
@@ -249,26 +262,30 @@ export async function getWeightLogs(deviceId = null, limit = 100, offset = 0) {
 
 /**
  * Register a new device
+ * Auto-creates default settings for new devices
  */
 export async function registerDevice(deviceData) {
   try {
-    const { device_id, device_name, device_type, mac_address, firmware_version } = deviceData;
+    const { device_id, name, location } = deviceData;
 
     if (!device_id) {
       throw new Error("device_id is required");
     }
 
+    // Check if device already exists
+    const { data: existingDevice } = await supabase.from("devices").select("device_id").eq("device_id", device_id).single();
+
+    const isNewDevice = !existingDevice;
+
+    // Register/update device
     const { data, error } = await supabase
       .from("devices")
       .upsert(
         {
           device_id,
-          device_name: device_name || null,
-          device_type: device_type || "ESP32",
-          mac_address: mac_address || null,
-          firmware_version: firmware_version || null,
+          name: name || null,
+          location: location || null,
           last_seen: new Date().toISOString(),
-          is_active: true,
         },
         {
           onConflict: "device_id",
@@ -278,6 +295,37 @@ export async function registerDevice(deviceData) {
       .single();
 
     if (error) throw error;
+
+    // Auto-create default settings for new devices
+    if (isNewDevice) {
+      try {
+        // Get global default max_weight (or use 500.0 as fallback)
+        let defaultMaxWeight = 500.0;
+        try {
+          const globalMaxWeight = await getMaxWeight();
+          defaultMaxWeight = globalMaxWeight;
+        } catch (err) {
+          console.log("[Register Device] Using default max_weight: 500.0");
+        }
+
+        // Insert default setting for this device
+        const { error: settingsError } = await supabase.from("settings").insert({
+          device_id: device_id,
+          max_weight: defaultMaxWeight,
+          updated_by: "system",
+        });
+
+        if (settingsError) {
+          // Log error but don't fail device registration
+          console.error(`[Register Device] Failed to create default settings for ${device_id}:`, settingsError);
+        } else {
+          console.log(`[Register Device] Auto-created default settings for ${device_id} with max_weight: ${defaultMaxWeight}`);
+        }
+      } catch (settingsErr) {
+        // Log error but don't fail device registration
+        console.error(`[Register Device] Error creating default settings:`, settingsErr);
+      }
+    }
 
     return data;
   } catch (error) {

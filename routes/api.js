@@ -10,20 +10,20 @@ const router = express.Router();
 /**
  * POST /api/devices/register
  * Registrasi ESP32
- * Body: { device_id, device_name?, device_type?, mac_address?, firmware_version? }
+ * Body: { device_id, name?, location? }
  */
 router.post("/devices/register", async (req, res) => {
   try {
-    const deviceData = req.body;
+    const { device_id, name, location } = req.body;
 
-    if (!deviceData.device_id) {
+    if (!device_id) {
       return res.status(400).json({
         success: false,
         error: "device_id is required",
       });
     }
 
-    const device = await registerDevice(deviceData);
+    const device = await registerDevice({ device_id, name, location });
 
     res.json({
       success: true,
