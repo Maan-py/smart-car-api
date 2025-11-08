@@ -341,19 +341,24 @@ export async function getEvents(deviceId = null, limit = 100, offset = 0) {
  */
 export async function sendControlCommand(deviceId, commandData, sentBy = "mobile_app") {
   try {
-    const { motor_enabled, alarm_enabled, ...otherData } = commandData;
+    const { motor_enabled, alarm_enabled, direction, speed, ...otherData } = commandData;
 
     const controlCommand = {
       device_id: deviceId,
       motor_enabled: motor_enabled !== undefined ? motor_enabled : null,
       alarm_enabled: alarm_enabled !== undefined ? alarm_enabled : null,
+      direction: direction !== undefined ? direction : null,
+      speed: speed !== undefined ? speed : null,
       ...otherData,
       timestamp: new Date().toISOString(),
     };
 
     // Determine command type
     let commandType = "manual_control";
-    if (motor_enabled !== undefined && alarm_enabled !== undefined) {
+    if (direction !== undefined) {
+      // Direction control (forward, reverse, stop)
+      commandType = "movement_control";
+    } else if (motor_enabled !== undefined && alarm_enabled !== undefined) {
       commandType = "motor_control";
     } else if (alarm_enabled !== undefined) {
       commandType = "alarm_control";
