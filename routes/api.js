@@ -89,11 +89,12 @@ router.get("/settings", async (req, res) => {
 /**
  * POST /api/settings
  * Ubah max_weight (push MQTT)
- * Body: { max_weight: number }
+ * Body: { max_weight: number, device_id?: string }
+ * Jika device_id tidak ada, akan update global setting
  */
 router.post("/settings", async (req, res) => {
   try {
-    const { max_weight } = req.body;
+    const { max_weight, device_id } = req.body;
 
     if (!max_weight || isNaN(max_weight) || max_weight <= 0) {
       return res.status(400).json({
@@ -102,7 +103,15 @@ router.post("/settings", async (req, res) => {
       });
     }
 
-    const result = await updateMaxWeight(max_weight, req.headers["user-agent"] || "mobile_app");
+    // updatedBy can be from header or default to 'mobile_app'
+    const updatedBy = req.headers["user-agent"] || "mobile_app";
+
+    // Call with correct parameters: (maxWeight, deviceId, updatedBy)
+    const result = await updateMaxWeight(
+      max_weight,
+      device_id || null, // device_id is optional, null means global
+      updatedBy
+    );
 
     res.json({
       success: true,

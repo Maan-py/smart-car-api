@@ -1,30 +1,12 @@
 import { supabase } from "../config/supabase.js";
-import { publishMQTT, MQTT_TOPICS } from "../config/mqtt.js";
+import { broker, MQTT_TOPICS } from "../config/mqtt.js";
 
 /**
- * Get max weight setting (global or per-device)
+ * Get current max weight setting
  */
-export async function getMaxWeight(deviceId = null) {
+export async function getMaxWeight() {
   try {
-    let query = supabase.from("settings").select("max_weight, updated_at").order("updated_at", { ascending: false });
-
-    // If device_id provided, get device-specific setting first, else get global
-    if (deviceId) {
-      query = query.eq("device_id", deviceId);
-    } else {
-      query = query.is("device_id", null);
-    }
-
-    const { data, error } = await query.limit(1).single();
-
-    if (error && error.code === "PGRST116") {
-      // Not found, try global if looking for device-specific
-      if (deviceId) {
-        const { data: globalData } = await supabase.from("settings").select("max_weight").is("device_id", null).order("updated_at", { ascending: false }).limit(1).single();
-        return globalData?.max_weight || 500.0;
-      }
-      return 500.0;
-    }
+    const { data, error } = await supabase.from("settings").select("max_weight, updated_at").order("updated_at", { ascending: false }).limit(1).single();
 
     if (error) throw error;
     return data?.max_weight || 500.0;
@@ -36,16 +18,56 @@ export async function getMaxWeight(deviceId = null) {
 
 /**
  * Update max weight setting (global or per-device)
+ * Only updates if device_id already exists and setting already exists
+ * Returns error if device or setting not found
  */
 export async function updateMaxWeight(newMaxWeight, deviceId = null, updatedBy = "mobile_app") {
   try {
-    const { data, error } = await supabase.from("settings").insert({
-      device_id: deviceId || null,
-      max_weight: parseFloat(newMaxWeight),
-      updated_by: updatedBy,
-    });
+    // If device_id is provided, ensure device exists in devices table
+    if (deviceId) {
+      // Check if device exists
+      const { data: existingDevice, error: deviceCheckError } = await supabase.from("devices").select("device_id").eq("device_id", deviceId).single();
 
-    if (error) throw error;
+      if (deviceCheckError && deviceCheckError.code === "PGRST116") {
+        // Device not found - return error
+        throw new Error(`Device ${deviceId} not found. Please register the device first.`);
+      } else if (deviceCheckError) {
+        throw deviceCheckError;
+      }
+    }
+
+    // Check if setting already exists for this device (or global)
+    // For global settings, device_id is NULL
+    const { data: existingSettings, error: checkError } = await supabase
+      .from("settings")
+      .select("id")
+      .eq("device_id", deviceId || null);
+
+    if (checkError) {
+      throw checkError;
+    }
+
+    if (existingSettings && existingSettings.length > 0) {
+      // Setting exists, update ALL rows with this device_id
+      const { data, error } = await supabase
+        .from("settings")
+        .update({
+          max_weight: parseFloat(newMaxWeight),
+          updated_by: updatedBy,
+        })
+        .eq("device_id", deviceId || null)
+        .select();
+
+      if (error) throw error;
+      console.log(`[Settings] Updated ${data.length} setting(s) for device_id: ${deviceId || "global"}`);
+    } else {
+      // Setting doesn't exist - return error
+      if (deviceId) {
+        throw new Error(`Setting for device ${deviceId} not found. Please create the setting first.`);
+      } else {
+        throw new Error(`Global setting not found. Please create the setting first.`);
+      }
+    }
 
     // Publish settings update to device(s) via MQTT
     const settingsPayload = {
@@ -55,9 +77,13 @@ export async function updateMaxWeight(newMaxWeight, deviceId = null, updatedBy =
     };
 
     // Log control command for settings update
-    await logControlCommand(deviceId || "all", "set_max_weight", settingsPayload, updatedBy);
+    await logControlCommand(deviceId || "all", "settings_update", settingsPayload, updatedBy);
 
-    publishMQTT(MQTT_TOPICS.SETTINGS, settingsPayload, { qos: 1 });
+    broker.publish({
+      topic: MQTT_TOPICS.SETTINGS,
+      payload: JSON.stringify(settingsPayload),
+      qos: 1,
+    });
 
     return { success: true, max_weight: parseFloat(newMaxWeight), device_id: deviceId };
   } catch (error) {
@@ -72,32 +98,28 @@ export async function updateMaxWeight(newMaxWeight, deviceId = null, updatedBy =
  */
 export async function processWeightData(weightData) {
   try {
-    const { weight, device_id, raw_payload } = weightData;
+    const { weight, device_id } = weightData;
     const currentWeight = parseFloat(weight);
     const deviceId = device_id || "default_device";
 
-    // Get max weight for this device (or global)
-    const maxWeight = await getMaxWeight(deviceId);
+    // Get current max weight
+    const maxWeight = await getMaxWeight();
+
+    // Get previous status to detect state changes
+    const previousStatus = await getDeviceStatus(deviceId);
+    const previousOverload = previousStatus.is_overload || false;
 
     // Check if overload
     const isOverload = currentWeight > maxWeight;
-    const status = isOverload ? "overload" : "normal";
-
-    // Get last log to detect state changes
-    const { data: lastLog } = await supabase.from("log_weight").select("status").eq("device_id", deviceId).order("timestamp", { ascending: false }).limit(1).single();
-
-    const previousStatus = lastLog?.status || "normal";
-    const previousOverload = previousStatus === "overload";
 
     // Log event if state changed (overload or recovery)
     if (previousOverload !== isOverload) {
-      const eventType = isOverload ? "overload" : "recovered";
-      const details = `Weight changed from ${previousStatus} to ${status}. Current: ${currentWeight}kg, Max: ${maxWeight}kg`;
-
+      const eventType = isOverload ? "overload" : "recovery";
       const { error: eventError } = await supabase.from("events").insert({
         device_id: deviceId,
         event_type: eventType,
-        details: details,
+        weight: currentWeight,
+        max_weight: maxWeight,
       });
 
       if (eventError) {
@@ -108,27 +130,40 @@ export async function processWeightData(weightData) {
     }
 
     // Log weight data
-    const { error: logError } = await supabase.from("log_weight").insert({
-      device_id: deviceId,
+    const { error: logError } = await supabase.from("weight_logs").insert({
       weight: currentWeight,
-      status: status,
-      raw_payload: raw_payload || null,
+      is_overload: isOverload,
+      device_id: deviceId,
     });
 
     if (logError) {
       console.error("Error logging weight:", logError);
     }
 
-    // Determine motor and alarm state
-    const motorEnabled = !isOverload;
-    const alarmEnabled = isOverload;
+    // Update device status
+    const { error: statusError } = await supabase.from("device_status").upsert(
+      {
+        device_id: deviceId,
+        current_weight: currentWeight,
+        is_overload: isOverload,
+        motor_enabled: !isOverload, // Motor hanya enabled jika tidak overload
+        alarm_active: isOverload, // Alarm aktif jika overload
+        last_update: new Date().toISOString(),
+      },
+      {
+        onConflict: "device_id",
+      }
+    );
+
+    if (statusError) {
+      console.error("Error updating device status:", statusError);
+    }
 
     // Send control commands to device via MQTT
     const controlCommand = {
       device_id: deviceId,
-      command: motorEnabled ? "motor_on" : "motor_off",
-      motor_enabled: motorEnabled,
-      alarm_enabled: alarmEnabled,
+      motor_enabled: !isOverload,
+      alarm_enabled: isOverload,
       max_weight: maxWeight,
       current_weight: currentWeight,
       is_overload: isOverload,
@@ -136,20 +171,23 @@ export async function processWeightData(weightData) {
     };
 
     // Log control command
-    await logControlCommand(deviceId, motorEnabled ? "motor_on" : "motor_off", controlCommand, "system");
+    await logControlCommand(deviceId, "motor_control", controlCommand, "system");
 
-    publishMQTT(MQTT_TOPICS.CONTROL, controlCommand, { qos: 1 });
+    broker.publish({
+      topic: MQTT_TOPICS.CONTROL,
+      payload: JSON.stringify(controlCommand),
+      qos: 1,
+    });
 
-    console.log(`[Weight Service] Processed: ${currentWeight}kg / ${maxWeight}kg - Status: ${status}`);
+    console.log(`[Weight Service] Processed: ${currentWeight}kg / ${maxWeight}kg - Overload: ${isOverload}`);
 
     return {
       success: true,
       current_weight: currentWeight,
       max_weight: maxWeight,
       is_overload: isOverload,
-      status: status,
-      motor_enabled: motorEnabled,
-      alarm_enabled: alarmEnabled,
+      motor_enabled: !isOverload,
+      alarm_enabled: isOverload,
     };
   } catch (error) {
     console.error("Error processing weight data:", error);
@@ -158,20 +196,18 @@ export async function processWeightData(weightData) {
 }
 
 /**
- * Get current device status (from last log_weight)
+ * Get current device status
  */
 export async function getDeviceStatus(deviceId = "default_device") {
   try {
-    // Get last weight log
-    const { data: lastLog, error } = await supabase.from("log_weight").select("*").eq("device_id", deviceId).order("timestamp", { ascending: false }).limit(1).single();
+    const { data, error } = await supabase.from("device_status").select("*").eq("device_id", deviceId).single();
 
-    if (error && error.code !== "PGRST116") throw error;
+    if (error && error.code !== "PGRST116") throw error; // PGRST116 = not found
 
-    if (!lastLog) {
+    if (!data) {
       return {
         device_id: deviceId,
         current_weight: 0,
-        status: "normal",
         is_overload: false,
         motor_enabled: false,
         alarm_active: false,
@@ -179,17 +215,7 @@ export async function getDeviceStatus(deviceId = "default_device") {
       };
     }
 
-    const isOverload = lastLog.status === "overload";
-
-    return {
-      device_id: deviceId,
-      current_weight: lastLog.weight,
-      status: lastLog.status,
-      is_overload: isOverload,
-      motor_enabled: !isOverload,
-      alarm_active: isOverload,
-      last_update: lastLog.timestamp,
-    };
+    return data;
   } catch (error) {
     console.error("Error getting device status:", error);
     throw error;
@@ -202,7 +228,7 @@ export async function getDeviceStatus(deviceId = "default_device") {
 export async function getWeightLogs(deviceId = null, limit = 100, offset = 0) {
   try {
     let query = supabase
-      .from("log_weight")
+      .from("weight_logs")
       .select("*")
       .order("timestamp", { ascending: false })
       .range(offset, offset + limit - 1);
@@ -226,7 +252,7 @@ export async function getWeightLogs(deviceId = null, limit = 100, offset = 0) {
  */
 export async function registerDevice(deviceData) {
   try {
-    const { device_id, name, location } = deviceData;
+    const { device_id, device_name, device_type, mac_address, firmware_version } = deviceData;
 
     if (!device_id) {
       throw new Error("device_id is required");
@@ -237,9 +263,12 @@ export async function registerDevice(deviceData) {
       .upsert(
         {
           device_id,
-          name: name || null,
-          location: location || null,
+          device_name: device_name || null,
+          device_type: device_type || "ESP32",
+          mac_address: mac_address || null,
+          firmware_version: firmware_version || null,
           last_seen: new Date().toISOString(),
+          is_active: true,
         },
         {
           onConflict: "device_id",
@@ -265,8 +294,8 @@ export async function getDeviceStatusWithTelemetry(deviceId) {
     // Get device status
     const status = await getDeviceStatus(deviceId);
 
-    // Get last telemetry (log_weight)
-    const { data: lastTelemetry, error: telemetryError } = await supabase.from("log_weight").select("*").eq("device_id", deviceId).order("timestamp", { ascending: false }).limit(1).single();
+    // Get last telemetry (weight_logs)
+    const { data: lastTelemetry, error: telemetryError } = await supabase.from("weight_logs").select("*").eq("device_id", deviceId).order("timestamp", { ascending: false }).limit(1).single();
 
     if (telemetryError && telemetryError.code !== "PGRST116") {
       console.error("Error getting last telemetry:", telemetryError);
@@ -283,14 +312,14 @@ export async function getDeviceStatusWithTelemetry(deviceId) {
 }
 
 /**
- * Get events (overload, recovery, device offline, etc.)
+ * Get events (overload & recovery logs)
  */
 export async function getEvents(deviceId = null, limit = 100, offset = 0) {
   try {
     let query = supabase
       .from("events")
       .select("*")
-      .order("created_at", { ascending: false })
+      .order("timestamp", { ascending: false })
       .range(offset, offset + limit - 1);
 
     if (deviceId) {
@@ -312,31 +341,33 @@ export async function getEvents(deviceId = null, limit = 100, offset = 0) {
  */
 export async function sendControlCommand(deviceId, commandData, sentBy = "mobile_app") {
   try {
-    const { command, payload, ...otherData } = commandData;
-
-    if (!command) {
-      throw new Error("command is required");
-    }
-
-    // Validate command
-    const validCommands = ["reset", "motor_on", "motor_off", "set_max_weight", "forward", "reverse", "stop"];
-    if (!validCommands.includes(command)) {
-      throw new Error(`Invalid command. Must be one of: ${validCommands.join(", ")}`);
-    }
+    const { motor_enabled, alarm_enabled, ...otherData } = commandData;
 
     const controlCommand = {
       device_id: deviceId,
-      command: command,
-      payload: payload || null,
+      motor_enabled: motor_enabled !== undefined ? motor_enabled : null,
+      alarm_enabled: alarm_enabled !== undefined ? alarm_enabled : null,
       ...otherData,
       timestamp: new Date().toISOString(),
     };
 
+    // Determine command type
+    let commandType = "manual_control";
+    if (motor_enabled !== undefined && alarm_enabled !== undefined) {
+      commandType = "motor_control";
+    } else if (alarm_enabled !== undefined) {
+      commandType = "alarm_control";
+    }
+
     // Log control command
-    await logControlCommand(deviceId, command, controlCommand, sentBy);
+    await logControlCommand(deviceId, commandType, controlCommand, sentBy);
 
     // Publish to MQTT
-    publishMQTT(MQTT_TOPICS.CONTROL, controlCommand, { qos: 1 });
+    broker.publish({
+      topic: MQTT_TOPICS.CONTROL,
+      payload: JSON.stringify(controlCommand),
+      qos: 1,
+    });
 
     console.log(`[Control] Command sent to ${deviceId}:`, controlCommand);
 
@@ -353,13 +384,12 @@ export async function sendControlCommand(deviceId, commandData, sentBy = "mobile
 /**
  * Log control command
  */
-async function logControlCommand(deviceId, command, commandData, sentBy) {
+async function logControlCommand(deviceId, commandType, commandData, sentBy) {
   try {
-    const { error } = await supabase.from("control_log").insert({
+    const { error } = await supabase.from("control_logs").insert({
       device_id: deviceId,
-      command: command,
-      payload: commandData,
-      status: "sent",
+      command_type: commandType,
+      command_data: commandData,
       sent_by: sentBy,
     });
 
@@ -377,9 +407,9 @@ async function logControlCommand(deviceId, command, commandData, sentBy) {
 export async function getControlLogs(deviceId = null, limit = 100, offset = 0) {
   try {
     let query = supabase
-      .from("control_log")
+      .from("control_logs")
       .select("*")
-      .order("created_at", { ascending: false })
+      .order("sent_at", { ascending: false })
       .range(offset, offset + limit - 1);
 
     if (deviceId) {
@@ -392,31 +422,6 @@ export async function getControlLogs(deviceId = null, limit = 100, offset = 0) {
     return data || [];
   } catch (error) {
     console.error("Error getting control logs:", error);
-    throw error;
-  }
-}
-
-/**
- * Update control log status (when device acknowledges)
- */
-export async function updateControlLogStatus(logId, status, executedAt = null) {
-  try {
-    const updateData = {
-      status: status,
-    };
-
-    if (executedAt) {
-      updateData.executed_at = executedAt;
-    } else if (status === "ack") {
-      updateData.executed_at = new Date().toISOString();
-    }
-
-    const { data, error } = await supabase.from("control_log").update(updateData).eq("id", logId).select().single();
-
-    if (error) throw error;
-    return data;
-  } catch (error) {
-    console.error("Error updating control log status:", error);
     throw error;
   }
 }
