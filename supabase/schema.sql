@@ -1,4 +1,11 @@
 -- ============================================================
+-- SMART CAR IOT DATABASE SCHEMA (Supabase/PostgreSQL)
+-- Pastikan ekstensi pgcrypto aktif untuk gen_random_uuid()
+-- ============================================================
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- ============================================================
 -- 1. DEVICES TABLE (daftar perangkat ESP32)
 -- ============================================================
 
@@ -11,7 +18,6 @@ CREATE TABLE IF NOT EXISTS devices (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Index untuk performa
 CREATE INDEX IF NOT EXISTS idx_devices_device_id ON devices(device_id);
 CREATE INDEX IF NOT EXISTS idx_devices_last_seen ON devices(last_seen DESC);
 
@@ -29,93 +35,99 @@ CREATE TABLE IF NOT EXISTS settings (
         REFERENCES devices(device_id) ON DELETE SET NULL
 );
 
--- Index untuk performa
 CREATE INDEX IF NOT EXISTS idx_settings_device_id ON settings(device_id);
 CREATE INDEX IF NOT EXISTS idx_settings_updated_at ON settings(updated_at DESC);
 
--- Insert default global settings
 INSERT INTO settings (device_id, max_weight, updated_by) 
 VALUES (NULL, 500.00, 'system')
 ON CONFLICT DO NOTHING;
 
 -- ============================================================
--- 3. LOG_WEIGHT TABLE (semua data berat dari sensor, via MQTT)
+-- 3. WEIGHT LOGS TABLE (riwayat data berat)
 -- ============================================================
 
-CREATE TABLE IF NOT EXISTS log_weight (
-    id BIGSERIAL PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS weight_logs (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     device_id VARCHAR(100) NOT NULL,
-    timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     weight DECIMAL(10, 2) NOT NULL,
-    status VARCHAR(20) NOT NULL CHECK (status IN ('normal', 'overload')),
+    is_overload BOOLEAN NOT NULL DEFAULT FALSE,
+    timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     raw_payload JSONB NULL,
-    CONSTRAINT fk_log_weight_device FOREIGN KEY (device_id) 
+    CONSTRAINT fk_weight_logs_device FOREIGN KEY (device_id) 
         REFERENCES devices(device_id) ON DELETE CASCADE
 );
 
--- Index untuk performa query
-CREATE INDEX IF NOT EXISTS idx_log_weight_device_timestamp ON log_weight(device_id, timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_log_weight_timestamp ON log_weight(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_log_weight_status ON log_weight(status);
+CREATE INDEX IF NOT EXISTS idx_weight_logs_device_timestamp ON weight_logs(device_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_weight_logs_timestamp ON weight_logs(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_weight_logs_overload ON weight_logs(is_overload);
 
 -- ============================================================
--- 4. CONTROL_LOG TABLE (semua perintah dari app/API ke ESP32)
+-- 4. DEVICE STATUS TABLE (status real-time per device)
 -- ============================================================
 
-CREATE TABLE IF NOT EXISTS control_log (
-    id BIGSERIAL PRIMARY KEY,
-    device_id VARCHAR(100) NOT NULL,
-    
-    -- Semua command termasuk forward, reverse, stop sudah di sini
-    command VARCHAR(50) NOT NULL CHECK (command IN (
-        'reset',
-        'motor_on',
-        'motor_off',
-        'set_max_weight',
-        'forward',
-        'reverse',
-        'stop'
-    )),
-    
-    payload JSONB NULL,                         -- misal {"speed": 100}
-    
-    status VARCHAR(20) NOT NULL DEFAULT 'sent' CHECK (status IN ('sent', 'ack', 'failed')),
-    
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    executed_at TIMESTAMP WITH TIME ZONE NULL,
-    
-    CONSTRAINT fk_control_log_device FOREIGN KEY (device_id) 
+CREATE TABLE IF NOT EXISTS device_status (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    device_id VARCHAR(100) NOT NULL UNIQUE,
+    current_weight DECIMAL(10, 2) NOT NULL DEFAULT 0,
+    is_overload BOOLEAN NOT NULL DEFAULT FALSE,
+    motor_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    alarm_active BOOLEAN NOT NULL DEFAULT FALSE,
+    last_update TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT fk_device_status_device FOREIGN KEY (device_id) 
         REFERENCES devices(device_id) ON DELETE CASCADE
 );
 
--- Index untuk performa query
-CREATE INDEX IF NOT EXISTS idx_control_log_device ON control_log(device_id);
-CREATE INDEX IF NOT EXISTS idx_control_log_created_at ON control_log(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_control_log_status ON control_log(status);
-CREATE INDEX IF NOT EXISTS idx_control_log_command ON control_log(command);
+CREATE INDEX IF NOT EXISTS idx_device_status_last_update ON device_status(last_update DESC);
 
 -- ============================================================
--- 5. EVENTS TABLE (overload, recovery, device offline)
+-- 5. EVENTS TABLE (overload & recovery logs)
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS events (
-    id BIGSERIAL PRIMARY KEY,
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     device_id VARCHAR(100) NOT NULL,
-    event_type VARCHAR(50) NOT NULL, 
-        -- "overload", "recovered", "device_offline", dll
-    details TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    event_type VARCHAR(50) NOT NULL CHECK (event_type IN ('overload', 'recovery', 'manual')),
+    weight DECIMAL(10, 2),
+    max_weight DECIMAL(10, 2),
+    timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    details JSONB NULL,
     CONSTRAINT fk_events_device FOREIGN KEY (device_id) 
         REFERENCES devices(device_id) ON DELETE CASCADE
 );
 
--- Index untuk performa query
 CREATE INDEX IF NOT EXISTS idx_events_device ON events(device_id);
-CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
 
 -- ============================================================
--- Function untuk update timestamp otomatis
+-- 6. CONTROL LOGS TABLE (riwayat command)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS control_logs (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    device_id VARCHAR(100) NOT NULL,
+    command_type VARCHAR(50) NOT NULL CHECK (
+        command_type IN (
+            'movement_control',
+            'motor_control',
+            'alarm_control',
+            'settings_update',
+            'manual_control'
+        )
+    ),
+    command_data JSONB NOT NULL,
+    sent_by VARCHAR(100) NOT NULL DEFAULT 'system',
+    sent_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT fk_control_logs_device FOREIGN KEY (device_id) 
+        REFERENCES devices(device_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_control_logs_device ON control_logs(device_id);
+CREATE INDEX IF NOT EXISTS idx_control_logs_sent_at ON control_logs(sent_at DESC);
+CREATE INDEX IF NOT EXISTS idx_control_logs_type ON control_logs(command_type);
+
+-- ============================================================
+-- TRIGGERS & FUNCTIONS
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -124,17 +136,12 @@ BEGIN
     NEW.updated_at = NOW();
     RETURN NEW;
 END;
-$$ language 'plpgsql';
+$$ LANGUAGE plpgsql;
 
--- Trigger untuk update updated_at di settings
 CREATE TRIGGER update_settings_updated_at 
     BEFORE UPDATE ON settings
     FOR EACH ROW 
     EXECUTE FUNCTION update_updated_at_column();
-
--- ============================================================
--- Function untuk update last_seen di devices
--- ============================================================
 
 CREATE OR REPLACE FUNCTION update_device_last_seen()
 RETURNS TRIGGER AS $$
@@ -144,10 +151,9 @@ BEGIN
     WHERE device_id = NEW.device_id;
     RETURN NEW;
 END;
-$$ language 'plpgsql';
+$$ LANGUAGE plpgsql;
 
--- Trigger untuk update last_seen ketika ada log_weight baru
-CREATE TRIGGER update_device_last_seen_on_log
-    AFTER INSERT ON log_weight
+CREATE TRIGGER update_device_last_seen_on_logs
+    AFTER INSERT ON weight_logs
     FOR EACH ROW
     EXECUTE FUNCTION update_device_last_seen();

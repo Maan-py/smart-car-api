@@ -1,0 +1,219 @@
+{
+  "info": {
+    "_postman_id": "a9cd5e9c-a6fd-4a27-8b5d-8c5f0f5dbea2",
+    "name": "Smart Car IoT API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Postman collection untuk menguji Smart Car IoT API (REST)."
+  },
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/health",
+          "host": ["{{base_url}}"],
+          "path": ["health"]
+        }
+      }
+    },
+    {
+      "name": "Register Device",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"device_id\": \"{{device_id}}\",\n  \"name\": \"Car 1\",\n  \"location\": \"Garage A\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/devices/register",
+          "host": ["{{base_url}}"],
+          "path": ["api", "devices", "register"]
+        }
+      }
+    },
+    {
+      "name": "Get Device Status",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/devices/{{device_id}}/status",
+          "host": ["{{base_url}}"],
+          "path": ["api", "devices", "{{device_id}}", "status"]
+        }
+      }
+    },
+    {
+      "name": "Get Settings",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/settings",
+          "host": ["{{base_url}}"],
+          "path": ["api", "settings"]
+        }
+      }
+    },
+    {
+      "name": "Update Settings",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"max_weight\": 600,\n  \"device_id\": \"{{device_id}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/settings",
+          "host": ["{{base_url}}"],
+          "path": ["api", "settings"]
+        }
+      }
+    },
+    {
+      "name": "Get Telemetry",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/telemetry?device_id={{device_id}}&limit=100&offset=0",
+          "host": ["{{base_url}}"],
+          "path": ["api", "telemetry"],
+          "query": [
+            {
+              "key": "device_id",
+              "value": "{{device_id}}"
+            },
+            {
+              "key": "limit",
+              "value": "100"
+            },
+            {
+              "key": "offset",
+              "value": "0"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Events",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/events?device_id={{device_id}}&limit=100&offset=0",
+          "host": ["{{base_url}}"],
+          "path": ["api", "events"],
+          "query": [
+            {
+              "key": "device_id",
+              "value": "{{device_id}}"
+            },
+            {
+              "key": "limit",
+              "value": "100"
+            },
+            {
+              "key": "offset",
+              "value": "0"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Send Control Command (Motor & Alarm)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"device_id\": \"{{device_id}}\",\n  \"motor_enabled\": false,\n  \"alarm_enabled\": true\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/control",
+          "host": ["{{base_url}}"],
+          "path": ["api", "control"]
+        }
+      }
+    },
+    {
+      "name": "Send Control Command (Movement)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"device_id\": \"{{device_id}}\",\n  \"direction\": \"forward\",\n  \"speed\": 100\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/control",
+          "host": ["{{base_url}}"],
+          "path": ["api", "control"]
+        }
+      }
+    },
+    {
+      "name": "Get Control Logs",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/control-log?device_id={{device_id}}&limit=100&offset=0",
+          "host": ["{{base_url}}"],
+          "path": ["api", "control-log"],
+          "query": [
+            {
+              "key": "device_id",
+              "value": "{{device_id}}"
+            },
+            {
+              "key": "limit",
+              "value": "100"
+            },
+            {
+              "key": "offset",
+              "value": "0"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "event": [],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:3000"
+    },
+    {
+      "key": "device_id",
+      "value": "esp32_001"
+    }
+  ]
+}
