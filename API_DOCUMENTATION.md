@@ -144,17 +144,34 @@ Mendapatkan status real-time dan last telemetry dari device.
 
 ### 4. Get Max Weight Setting
 
-**GET** `/api/settings`
+**GET** `/api/settings` atau `/api/settings?device_id=esp32_001`
 
-Mendapatkan pengaturan berat maksimal saat ini.
+Mendapatkan pengaturan berat maksimal saat ini. Jika `device_id` di-query dan setting khusus device tersedia, API akan mengembalikan nilai tersebut. Jika tidak, API otomatis fallback ke setting global.
 
-**Response:**
+**Query Parameters (optional):**
+
+- `device_id` - Ambil max_weight spesifik device
+
+**Response (global):**
 
 ```json
 {
   "success": true,
   "data": {
-    "max_weight": 500.0
+    "max_weight": 500.0,
+    "scope": "global"
+  }
+}
+```
+
+**Response (device-specific):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "device_id": "esp32_001",
+    "max_weight": 600.0
   }
 }
 ```
@@ -340,6 +357,25 @@ Mengirim command ke device via MQTT. Command dapat berupa kontrol motor, alarm, 
 ```
 
 **Request Body (Contoh 4 - Stop):**
+**Request Body (Contoh 5 - Belok Kanan):**
+
+```json
+{
+  "device_id": "esp32_001",
+  "direction": "right",
+  "speed": 60
+}
+```
+
+**Request Body (Contoh 6 - Belok Kiri):**
+
+```json
+{
+  "device_id": "esp32_001",
+  "direction": "left",
+  "speed": 60
+}
+```
 
 ```json
 {
@@ -353,7 +389,7 @@ Mengirim command ke device via MQTT. Command dapat berupa kontrol motor, alarm, 
 - `device_id` (required) - Device ID target
 - `motor_enabled` (optional) - Boolean untuk enable/disable motor
 - `alarm_enabled` (optional) - Boolean untuk enable/disable alarm
-- `direction` (optional) - Arah pergerakan: `"forward"` (maju), `"reverse"` (mundur), atau `"stop"` (berhenti)
+- `direction` (optional) - Arah pergerakan: `"forward"` (maju), `"reverse"` (mundur), `"left"` (belok kiri), `"right"` (belok kanan), atau `"stop"` (berhenti)
 - `speed` (optional) - Kecepatan (0-100 atau sesuai implementasi device)
 - Fields lainnya dapat ditambahkan sesuai kebutuhan
 
@@ -385,14 +421,14 @@ Mengirim command ke device via MQTT. Command dapat berupa kontrol motor, alarm, 
 
 **Command Types (auto-determined):**
 
-- `movement_control` - Jika `direction` disediakan (forward, reverse, stop)
+- `movement_control` - Jika `direction` disediakan (forward, reverse, left, right, stop)
 - `motor_control` - Jika `motor_enabled` dan `alarm_enabled` keduanya disediakan
 - `alarm_control` - Jika hanya `alarm_enabled` yang disediakan
 - `manual_control` - Untuk command lainnya
 
 **Catatan Penting:**
 
-- Command `direction` (forward/reverse/stop) dari mobile app akan dikirim langsung ke device via MQTT
+- Command `direction` (forward/reverse/left/right/stop) dari mobile app akan dikirim langsung ke device via MQTT
 - Semua command akan di-log ke database (`control_logs`) dengan command type yang sesuai
 - Device ESP32 harus subscribe ke topic `device/control` untuk menerima command
 - Jika device dalam kondisi overload (berat melebihi max_weight), sistem akan otomatis mengirim command untuk mematikan motor, namun command manual dari mobile app tetap dapat dikirim (device dapat memutuskan prioritasnya)
@@ -529,12 +565,34 @@ API mengirim perintah kontrol ke device. Dapat berupa kontrol dari sistem (berda
 }
 ```
 
+**Payload Format (Contoh 4 - Belok Kanan dari Mobile App):**
+
+```json
+{
+  "device_id": "esp32_001",
+  "direction": "right",
+  "speed": 60,
+  "timestamp": "2024-01-15T10:30:00.000Z"
+}
+```
+
+**Payload Format (Contoh 5 - Belok Kiri dari Mobile App):**
+
+```json
+{
+  "device_id": "esp32_001",
+  "direction": "left",
+  "speed": 60,
+  "timestamp": "2024-01-15T10:30:00.000Z"
+}
+```
+
 **Fields:**
 
 - `device_id` (string) - Device ID target
 - `motor_enabled` (boolean, optional) - `true` jika motor boleh berjalan, `false` jika harus mati
 - `alarm_enabled` (boolean, optional) - `true` jika alarm harus berbunyi, `false` jika mati
-- `direction` (string, optional) - Arah pergerakan: `"forward"` (maju), `"reverse"` (mundur), atau `"stop"` (berhenti)
+- `direction` (string, optional) - Arah pergerakan: `"forward"` (maju), `"reverse"` (mundur), `"left"` (belok kiri), `"right"` (belok kanan), atau `"stop"` (berhenti)
 - `speed` (number, optional) - Kecepatan (0-100 atau sesuai implementasi device)
 - `is_overload` (boolean, optional) - `true` jika berat melebihi maksimal
 - `max_weight` (number, optional) - Berat maksimal saat ini
@@ -554,6 +612,8 @@ API mengirim perintah kontrol ke device. Dapat berupa kontrol dari sistem (berda
 
 - `direction = "forward"` - Mobil bergerak maju dengan kecepatan sesuai `speed`
 - `direction = "reverse"` - Mobil bergerak mundur dengan kecepatan sesuai `speed`
+- `direction = "left"` - Mobil membelok ke kiri (device bebas menentukan implementasi steering)
+- `direction = "right"` - Mobil membelok ke kanan
 - `direction = "stop"` - Mobil berhenti (speed akan diabaikan)
 
 ---
@@ -766,6 +826,30 @@ curl -X POST http://localhost:3000/api/control \
   }'
 ```
 
+### Send Control Command (Belok Kanan)
+
+```bash
+curl -X POST http://localhost:3000/api/control \
+  -H "Content-Type: application/json" \
+  -d '{
+    "device_id": "esp32_001",
+    "direction": "right",
+    "speed": 60
+  }'
+```
+
+### Send Control Command (Belok Kiri)
+
+```bash
+curl -X POST http://localhost:3000/api/control \
+  -H "Content-Type: application/json" \
+  -d '{
+    "device_id": "esp32_001",
+    "direction": "left",
+    "speed": 60
+  }'
+```
+
 ### Get Control Logs
 
 ```bash
@@ -846,6 +930,6 @@ API menggunakan tabel-tabel berikut di Supabase:
 7. **Health Check**: Endpoint `/health` menampilkan status MQTT connection untuk monitoring
 8. **Error Handling**: Semua error mengembalikan format response yang konsisten dengan `success: false` dan pesan error
 9. **Pagination**: Endpoint yang mengembalikan list data (telemetry, events, control-log) mendukung pagination dengan `limit` dan `offset`
-10. **Remote Control**: Mobile app dapat mengirim command maju (`forward`), mundur (`reverse`), dan stop (`stop`) melalui endpoint `/api/control` dengan field `direction` dan `speed`
+10. **Remote Control**: Mobile app dapat mengirim command maju (`forward`), mundur (`reverse`), belok (`left`/`right`), dan stop (`stop`) melalui endpoint `/api/control` dengan field `direction` dan `speed`
 11. **Command Priority**: Disarankan device ESP32 memprioritaskan kondisi overload (dari sistem) daripada command manual dari mobile app untuk keamanan
 12. **Command Logging**: Semua command yang dikirim akan di-log ke database untuk audit trail

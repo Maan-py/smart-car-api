@@ -51,10 +51,13 @@ export async function updateMaxWeight(newMaxWeight, deviceId = null, updatedBy =
 
     // Check if setting already exists for this device (or global)
     // For global settings, device_id is NULL
-    const { data: existingSettings, error: checkError } = await supabase
-      .from("settings")
-      .select("id")
-      .eq("device_id", deviceId || null);
+    let settingsQuery = supabase.from("settings").select("id");
+    if (deviceId) {
+      settingsQuery = settingsQuery.eq("device_id", deviceId);
+    } else {
+      settingsQuery = settingsQuery.is("device_id", null);
+    }
+    const { data: existingSettings, error: checkError } = await settingsQuery;
 
     if (checkError) {
       throw checkError;
@@ -62,14 +65,16 @@ export async function updateMaxWeight(newMaxWeight, deviceId = null, updatedBy =
 
     if (existingSettings && existingSettings.length > 0) {
       // Setting exists, update ALL rows with this device_id
-      const { data, error } = await supabase
-        .from("settings")
-        .update({
-          max_weight: parseFloat(newMaxWeight),
-          updated_by: updatedBy,
-        })
-        .eq("device_id", deviceId || null)
-        .select();
+      let updateQuery = supabase.from("settings").update({
+        max_weight: parseFloat(newMaxWeight),
+        updated_by: updatedBy,
+      });
+      if (deviceId) {
+        updateQuery = updateQuery.eq("device_id", deviceId);
+      } else {
+        updateQuery = updateQuery.is("device_id", null);
+      }
+      const { data, error } = await updateQuery.select();
 
       if (error) throw error;
       console.log(`[Settings] Updated ${data.length} setting(s) for device_id: ${deviceId || "global"}`);

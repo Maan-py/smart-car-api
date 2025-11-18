@@ -70,11 +70,13 @@ router.get("/devices/:id/status", async (req, res) => {
  */
 router.get("/settings", async (req, res) => {
   try {
-    const maxWeight = await getMaxWeight();
+    const deviceId = req.query.device_id || null;
+    const maxWeight = await getMaxWeight(deviceId);
     res.json({
       success: true,
       data: {
         max_weight: maxWeight,
+        ...(deviceId ? { device_id: deviceId } : { scope: "global" }),
       },
     });
   } catch (error) {
