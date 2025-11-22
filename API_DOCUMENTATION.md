@@ -357,6 +357,14 @@ Mengirim command ke device via MQTT. Command dapat berupa kontrol motor, alarm, 
 ```
 
 **Request Body (Contoh 4 - Stop):**
+
+```json
+{
+  "device_id": "esp32_001",
+  "direction": "stop"
+}
+```
+
 **Request Body (Contoh 5 - Belok Kanan):**
 
 ```json
@@ -374,13 +382,6 @@ Mengirim command ke device via MQTT. Command dapat berupa kontrol motor, alarm, 
   "device_id": "esp32_001",
   "direction": "left",
   "speed": 60
-}
-```
-
-```json
-{
-  "device_id": "esp32_001",
-  "direction": "stop"
 }
 ```
 
@@ -478,7 +479,7 @@ Mendapatkan riwayat command yang dikirim ke device.
 
 **Command Types:**
 
-- `movement_control` - Control pergerakan (forward, reverse, stop) dari mobile app
+- `movement_control` - Control pergerakan (forward, reverse, left, right, stop) dari mobile app
 - `motor_control` - Control motor dan alarm (otomatis dari sistem atau manual)
 - `alarm_control` - Control alarm saja
 - `settings_update` - Update settings

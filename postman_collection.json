@@ -179,6 +179,48 @@
       }
     },
     {
+      "name": "Send Control Command (Turn Right)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"device_id\": \"{{device_id}}\",\n  \"direction\": \"right\",\n  \"speed\": 60\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/control",
+          "host": ["{{base_url}}"],
+          "path": ["api", "control"]
+        }
+      }
+    },
+    {
+      "name": "Send Control Command (Turn Left)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"device_id\": \"{{device_id}}\",\n  \"direction\": \"left\",\n  \"speed\": 60\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/control",
+          "host": ["{{base_url}}"],
+          "path": ["api", "control"]
+        }
+      }
+    },
+    {
       "name": "Get Control Logs",
       "request": {
         "method": "GET",

@@ -120,8 +120,8 @@ export async function processWeightData(weightData) {
     const currentWeight = parseFloat(weight);
     const deviceId = device_id || "default_device";
 
-    // Get current max weight
-    const maxWeight = await getMaxWeight();
+    // Get current max weight for this specific device
+    const maxWeight = await getMaxWeight(deviceId);
 
     // Get previous status to detect state changes
     const previousStatus = await getDeviceStatus(deviceId);
